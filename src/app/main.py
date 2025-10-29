@@ -46,10 +46,10 @@ def lambda_handler(event, context):
             gasto["fecha"] = date.today().isoformat()
             logger.info(f"Fecha agregada automáticamente: {gasto['fecha']}")
 
-        if chat_id == 641045556:
-            gasto["quien"] = "User1"
+        if chat_id == 6410455563:
+            gasto["quien"] = "Lauren"
         else:
-            gasto["quien"] = "User2"
+            gasto["quien"] = "Santiago"
 
         # 4️⃣ Guardar en Google Sheets
         logger.info("Invocando append_gasto()...")
