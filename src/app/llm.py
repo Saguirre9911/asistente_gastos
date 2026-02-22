@@ -1,17 +1,16 @@
 import json
 import os
-from datetime import date, datetime
+import re
+from datetime import date
 from zoneinfo import ZoneInfo
 
 import dotenv
-import google.generativeai as gen
+from google import genai
 
 dotenv.load_dotenv()
-gen.configure(api_key=os.environ["GEMINI_API_KEY"])
-print(os.environ["GEMINI_API_KEY"])
 TZ = ZoneInfo("America/Bogota")
 
-MODEL = "models/gemini-2.0-flash"
+MODEL = "gemini-2.5-flash"
 
 SYSTEM_PROMPT = """
 Eres un extractor de información. Devuelves SOLO JSON válido, sin texto adicional, sin ```.
@@ -31,20 +30,87 @@ Reglas:
 - No incluyas comentarios, explicaciones ni texto fuera del JSON.
 """
 
-def parse_gasto(texto):
+
+# ==============================
+# 🔧 Cliente
+# ==============================
+def get_client():
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("❌ GEMINI_API_KEY no está configurada.")
+    return genai.Client(api_key=api_key)
+
+
+# ==============================
+# 🧹 Limpieza de JSON (crítico)
+# ==============================
+def clean_json_output(raw: str) -> str:
+    """
+    Limpia la salida del modelo para que sea JSON válido.
+    Elimina ```json, ``` y extrae el bloque { ... }.
+    """
+    if not raw:
+        return raw
+
+    # Quitar ```json y ```
+    cleaned = raw.replace("```json", "").replace("```", "").strip()
+
+    # Extraer contenido entre { ... }
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        return match.group(0)
+
+    # Si no encuentra JSON, devolver raw (esto causará fallback)
+    return cleaned.strip()
+
+
+# ==============================
+# 🧠 Parseo con Gemini
+# ==============================
+def parse_gasto(texto: str) -> dict:
     prompt = SYSTEM_PROMPT + "\nUsuario: " + texto
 
-    response = gen.GenerativeModel(
-        MODEL,
-        generation_config={
-            "response_mime_type": "application/json"   # <-- LA CLAVE
-        },
-    ).generate_content(prompt)
+    try:
+        client = get_client()
 
-    data = json.loads(response.text)
+        response = client.models.generate_content(model=MODEL, contents=prompt)
 
-    # Set default date
+        raw = response.text.strip()
+        print("RAW OUTPUT LLM:", raw)
+
+        cleaned = clean_json_output(raw)
+        print("CLEANED JSON:", cleaned)
+
+        data = json.loads(cleaned)
+
+    except Exception as e:
+        print("⚠️ Gemini falló, usando fallback:", e)
+        return fallback_parse(texto)
+
+    # Completar fecha si viene null
     if not data.get("fecha"):
         data["fecha"] = date.today().isoformat()
 
     return data
+
+
+# ==============================
+# 🔄 Fallback
+# ==============================
+def fallback_parse(texto: str) -> dict:
+    """
+    Última línea de defensa: heurística simple si Gemini falla.
+    """
+    import re
+
+    monto = 0
+    m = re.search(r"(\d[\d\.]*)", texto)
+    if m:
+        monto = float(m.group(1))
+
+    return {
+        "monto": monto,
+        "categoria": "otros",
+        "descripcion": texto,
+        "fecha": date.today().isoformat(),
+    }
