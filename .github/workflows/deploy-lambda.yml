@@ -1,0 +1,149 @@
+name: Deploy Lambda
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag override (default: short git SHA)"
+        required: false
+        type: string
+      update_webhook:
+        description: "Update Telegram webhook after deploy"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: lambda-prod-deploy
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'sa-east-1' }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY || 'asistente-gastos' }}
+      LAMBDA_FUNCTION_NAME: ${{ vars.LAMBDA_FUNCTION_NAME || 'asistente-gastos' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve deploy metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          TAG="${GITHUB_SHA::12}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ -n "${{ inputs.image_tag }}" ]]; then
+            TAG="${{ inputs.image_tag }}"
+          fi
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${TAG}"
+          IMAGE_URI_LATEST="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+          echo "account_id=${ACCOUNT_ID}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
+          echo "image_uri_latest=${IMAGE_URI_LATEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_uri }}
+            ${{ steps.meta.outputs.image_uri_latest }}
+
+      - name: Update Lambda image
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws lambda update-function-code \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --region "${AWS_REGION}" \
+            --image-uri "${{ steps.meta.outputs.image_uri }}" >/dev/null
+          aws lambda wait function-updated \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --region "${AWS_REGION}"
+
+      - name: Update Lambda environment variables
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_SECRET_TOKEN: ${{ secrets.TELEGRAM_SECRET_TOKEN }}
+          ALLOWED_CHAT_IDS: ${{ secrets.ALLOWED_CHAT_IDS }}
+          DEFAULT_CURRENCY: ${{ secrets.DEFAULT_CURRENCY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_CREDENTIALS_JSON_BASE64: ${{ secrets.GOOGLE_CREDENTIALS_JSON_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CURRENCY_VALUE="${DEFAULT_CURRENCY:-COP}"
+
+          jq -cn \
+            --arg telegram_bot_token "${TELEGRAM_BOT_TOKEN}" \
+            --arg telegram_secret_token "${TELEGRAM_SECRET_TOKEN}" \
+            --arg allowed_chat_ids "${ALLOWED_CHAT_IDS}" \
+            --arg default_currency "${CURRENCY_VALUE}" \
+            --arg gemini_api_key "${GEMINI_API_KEY}" \
+            --arg google_sheet_id "${GOOGLE_SHEET_ID}" \
+            --arg google_credentials_json_base64 "${GOOGLE_CREDENTIALS_JSON_BASE64}" \
+            '{Variables:{TELEGRAM_BOT_TOKEN:$telegram_bot_token,TELEGRAM_SECRET_TOKEN:$telegram_secret_token,ALLOWED_CHAT_IDS:$allowed_chat_ids,DEFAULT_CURRENCY:$default_currency,GEMINI_API_KEY:$gemini_api_key,GOOGLE_SHEET_ID:$google_sheet_id,GOOGLE_CREDENTIALS_JSON_BASE64:$google_credentials_json_base64}}' \
+            >/tmp/lambda-env.json
+
+          aws lambda update-function-configuration \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --region "${AWS_REGION}" \
+            --environment file:///tmp/lambda-env.json >/dev/null
+
+          aws lambda wait function-updated \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --region "${AWS_REGION}"
+
+      - name: Update Telegram webhook
+        if: ${{ github.event_name == 'push' || inputs.update_webhook }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_SECRET_TOKEN: ${{ secrets.TELEGRAM_SECRET_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          FUNCTION_URL="$(aws lambda get-function-url-config --function-name "${LAMBDA_FUNCTION_NAME}" --region "${AWS_REGION}" --query FunctionUrl --output text)"
+
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=${FUNCTION_URL}" \
+            --data-urlencode "secret_token=${TELEGRAM_SECRET_TOKEN}" \
+            >/tmp/telegram-set-webhook.json
+
+          jq -e '.ok == true' /tmp/telegram-set-webhook.json >/dev/null
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws lambda get-function \
+            --function-name "${LAMBDA_FUNCTION_NAME}" \
+            --region "${AWS_REGION}" \
+            --query '{FunctionName:Configuration.FunctionName,ImageUri:Code.ImageUri,LastModified:Configuration.LastModified}' \
+            --output json

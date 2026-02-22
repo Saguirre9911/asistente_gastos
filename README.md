@@ -139,6 +139,48 @@ aws lambda get-function \
 
 ---
 
+## 🔁 CD Automático (GitHub Actions)
+
+Se agregó el workflow `.github/workflows/deploy-lambda.yml` con estos triggers:
+
+- `push` a `main`
+- `workflow_dispatch` (manual)
+
+### Qué hace
+
+1. Build de imagen Docker (`linux/amd64`)
+2. Push a ECR (`<repo>:<sha>` y `:latest`)
+3. Update de Lambda con la nueva imagen
+4. Update de variables de entorno de Lambda
+5. Refresh del webhook de Telegram (en push siempre, manual opcional)
+
+### Variables de GitHub (Repository Variables)
+
+- `AWS_REGION` (ej. `sa-east-1`)
+- `ECR_REPOSITORY` (ej. `asistente-gastos`)
+- `LAMBDA_FUNCTION_NAME` (ej. `asistente-gastos`)
+
+### Secrets de GitHub (Repository Secrets)
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_SECRET_TOKEN`
+- `ALLOWED_CHAT_IDS`
+- `DEFAULT_CURRENCY` (opcional, default en workflow: `COP`)
+- `GEMINI_API_KEY`
+- `GOOGLE_SHEET_ID`
+- `GOOGLE_CREDENTIALS_JSON_BASE64`
+
+### Ejecución manual
+
+Desde Actions > `Deploy Lambda` > `Run workflow` puedes:
+
+- desplegar con tag automático (SHA corto), o
+- pasar `image_tag` manual.
+
+---
+
 ## 🧠 Prueba en Producción (Lambda URL)
 
 ```bash
@@ -314,5 +356,4 @@ usuario → mensaje → webhook → Lambda → Gemini → Sheets → respuesta a
 ## 🚀 Próximos pasos
 3. Añadir un pipeline **CI/CD con GitHub Actions** para build + push + deploy automático.
 4. Implementar **monitoring y alerting** en CloudWatch.
-
 
