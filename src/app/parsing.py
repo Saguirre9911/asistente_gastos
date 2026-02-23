@@ -22,7 +22,6 @@ _CATEGORY_KEYWORDS = {
 }
 
 
-
 def parse_amount(raw: str) -> float | None:
     if not raw:
         return None
@@ -102,14 +101,12 @@ def parse_amount(raw: str) -> float | None:
     return float(int(round(parsed)))
 
 
-
 def detect_category(description: str) -> str:
     text = (description or "").lower()
     for category, keywords in _CATEGORY_KEYWORDS.items():
         if any(keyword in text for keyword in keywords):
             return category
     return "otros"
-
 
 
 def parse_g_command(text: str) -> dict:

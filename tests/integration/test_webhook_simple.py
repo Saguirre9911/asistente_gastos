@@ -180,10 +180,17 @@ def test_webhook_resumen_mes(monkeypatch):
     assert result["statusCode"] == 200
     assert captured_range["start_date"] == FakeDate(2026, 2, 1)
     assert captured_range["end_date"] == FakeDate(2026, 2, 28)
-    assert any("💸 Resumen mes (2026-02-01 a 2026-02-28)" in message["text"] for message in sent_messages)
-    assert any("🧾 Total general: $25.000" in message["text"] for message in sent_messages)
+    assert any(
+        "💸 Resumen mes (2026-02-01 a 2026-02-28)" in message["text"]
+        for message in sent_messages
+    )
+    assert any(
+        "🧾 Total general: $25.000" in message["text"] for message in sent_messages
+    )
     assert any("👤 Santi" in message["text"] for message in sent_messages)
-    assert any("💰 Total Santi: $25.000" in message["text"] for message in sent_messages)
+    assert any(
+        "💰 Total Santi: $25.000" in message["text"] for message in sent_messages
+    )
 
 
 def test_webhook_resumen_hoy_includes_people_breakdown(monkeypatch):

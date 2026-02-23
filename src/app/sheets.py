@@ -12,7 +12,6 @@ from .parsing import parse_amount
 SHEET_RANGE = "registros!A:E"
 
 
-
 def get_google_credentials():
     creds_b64 = os.getenv("GOOGLE_CREDENTIALS_JSON_BASE64") or os.getenv(
         "GOOGLE_CREDENTIALS_JSON"
@@ -31,7 +30,6 @@ def get_google_credentials():
     )
 
 
-
 def _service():
     return build(
         "sheets",
@@ -41,13 +39,11 @@ def _service():
     )
 
 
-
 def _sheet_id() -> str:
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
     if not sheet_id:
         raise RuntimeError("Missing GOOGLE_SHEET_ID")
     return sheet_id
-
 
 
 def append_gasto(gasto: dict) -> None:
@@ -77,7 +73,6 @@ def append_gasto(gasto: dict) -> None:
     )
 
 
-
 def _parse_date(value: str) -> date | None:
     raw = (value or "").strip()
     if not raw:
@@ -95,8 +90,9 @@ def _parse_date(value: str) -> date | None:
     return None
 
 
-
-def list_gastos(start_date: date | None = None, end_date: date | None = None) -> list[dict]:
+def list_gastos(
+    start_date: date | None = None, end_date: date | None = None
+) -> list[dict]:
     result = (
         _service()
         .spreadsheets()

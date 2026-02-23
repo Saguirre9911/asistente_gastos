@@ -28,11 +28,11 @@ _CATEGORY_EMOJIS = {
     "otros": "📦",
 }
 
+_CARD_LIKE_PATTERN = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 
 
 def _ok(body: str = "ok") -> dict:
     return {"statusCode": 200, "body": body}
-
 
 
 def _parse_allowed_chat_ids() -> set[int]:
@@ -50,7 +50,6 @@ def _parse_allowed_chat_ids() -> set[int]:
     return values
 
 
-
 def _get_secret_from_headers(headers: dict | None) -> str:
     if not isinstance(headers, dict):
         return ""
@@ -58,7 +57,6 @@ def _get_secret_from_headers(headers: dict | None) -> str:
         if isinstance(key, str) and key.lower() == "x-telegram-bot-api-secret-token":
             return str(value)
     return ""
-
 
 
 def _is_valid_telegram_request(event: dict) -> bool:
@@ -74,7 +72,6 @@ def _is_valid_telegram_request(event: dict) -> bool:
         is_valid,
     )
     return is_valid
-
 
 
 def _decode_body(event: dict) -> dict:
@@ -100,7 +97,6 @@ def _decode_body(event: dict) -> dict:
         return {}
 
 
-
 def _normalize_key(raw_key: object) -> object:
     if not isinstance(raw_key, str):
         return raw_key
@@ -111,7 +107,8 @@ def _normalize_key(raw_key: object) -> object:
 def _normalize_payload_keys(value: object) -> object:
     if isinstance(value, dict):
         return {
-            _normalize_key(key): _normalize_payload_keys(item) for key, item in value.items()
+            _normalize_key(key): _normalize_payload_keys(item)
+            for key, item in value.items()
         }
     if isinstance(value, list):
         return [_normalize_payload_keys(item) for item in value]
@@ -126,6 +123,22 @@ def _to_int(value: object) -> int | None:
         if re.fullmatch(r"-?\d+", cleaned):
             return int(cleaned)
     return None
+
+
+def _sanitize_for_logs(text: str, max_len: int = 160) -> str:
+    if not isinstance(text, str):
+        return ""
+
+    def _mask_card(match: re.Match[str]) -> str:
+        digits = re.sub(r"\D", "", match.group(0))
+        if len(digits) < 4:
+            return "***"
+        return f"[card_ending_{digits[-4:]}]"
+
+    sanitized = _CARD_LIKE_PATTERN.sub(_mask_card, text)
+    if len(sanitized) > max_len:
+        return f"{sanitized[:max_len]}..."
+    return sanitized
 
 
 def _send_message(chat_id: int, text: str, reply_markup: dict | None = None) -> None:
@@ -151,20 +164,26 @@ def _send_message(chat_id: int, text: str, reply_markup: dict | None = None) -> 
         timeout=8,
     )
     response.raise_for_status()
-    logger.info("Telegram sendMessage success: chat_id=%s status=%s", chat_id, response.status_code)
-
+    logger.info(
+        "Telegram sendMessage success: chat_id=%s status=%s",
+        chat_id,
+        response.status_code,
+    )
 
 
 def _menu_markup() -> dict:
     return {
         "keyboard": [
             [{"text": "/g 25000 almuerzo"}],
-            [{"text": "/resumen_hoy"}, {"text": "/resumen_semana"}, {"text": "/resumen_mes"}],
+            [
+                {"text": "/resumen_hoy"},
+                {"text": "/resumen_semana"},
+                {"text": "/resumen_mes"},
+            ],
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False,
     }
-
 
 
 def _format_money(value: float | int) -> str:
@@ -178,7 +197,9 @@ def _category_emoji(category: str) -> str:
     return _CATEGORY_EMOJIS.get(category, "💸")
 
 
-def _format_summary(gastos: list[dict], title: str, include_people: bool = False) -> str:
+def _format_summary(
+    gastos: list[dict], title: str, include_people: bool = False
+) -> str:
     if not gastos:
         return f"💸 {title}\nSin gastos registrados."
 
@@ -205,8 +226,12 @@ def _format_summary(gastos: list[dict], title: str, include_people: bool = False
         "",
         "🏷️ Categorías (global):",
     ]
-    for category, amount in sorted(by_category.items(), key=lambda item: item[1], reverse=True):
-        lines.append(f"- {_category_emoji(category)} {category}: {_format_money(amount)}")
+    for category, amount in sorted(
+        by_category.items(), key=lambda item: item[1], reverse=True
+    ):
+        lines.append(
+            f"- {_category_emoji(category)} {category}: {_format_money(amount)}"
+        )
 
     if include_people:
         lines.extend(["", "👥 Desglose por persona:"])
@@ -230,16 +255,16 @@ def _format_summary(gastos: list[dict], title: str, include_people: bool = False
     return "\n".join(lines)
 
 
-
 def _handle_resumen_hoy(chat_id: int) -> None:
     today = date.today()
     gastos = list_gastos(start_date=today, end_date=today)
     logger.info("Resumen hoy: chat_id=%s gastos=%s", chat_id, len(gastos))
     _send_message(
         chat_id,
-        _format_summary(gastos, f"Resumen de hoy ({today.isoformat()})", include_people=True),
+        _format_summary(
+            gastos, f"Resumen de hoy ({today.isoformat()})", include_people=True
+        ),
     )
-
 
 
 def _handle_resumen_semana(chat_id: int) -> None:
@@ -262,7 +287,6 @@ def _handle_resumen_semana(chat_id: int) -> None:
             include_people=True,
         ),
     )
-
 
 
 def _handle_resumen_mes(chat_id: int) -> None:
@@ -304,9 +328,13 @@ def _resolve_actor(chat_id: int, user: dict) -> str:
     return f"chat_{chat_id}"
 
 
-
 def _handle_g_command(chat_id: int, text: str, user: dict) -> None:
-    logger.info("Handling /g command: chat_id=%s text_chars=%s", chat_id, len(text))
+    logger.info(
+        "Handling /g command: chat_id=%s text_chars=%s text_preview=%s",
+        chat_id,
+        len(text),
+        _sanitize_for_logs(text),
+    )
     parsed = parse_g_command(text)
     if not parsed:
         logger.warning("Invalid /g format: chat_id=%s", chat_id)
@@ -314,7 +342,12 @@ def _handle_g_command(chat_id: int, text: str, user: dict) -> None:
         return
 
     if parsed.get("error"):
-        logger.warning("Parse /g error: chat_id=%s error=%s", chat_id, parsed["error"])
+        logger.warning(
+            "Parse /g error: chat_id=%s error=%s text_preview=%s",
+            chat_id,
+            parsed["error"],
+            _sanitize_for_logs(text),
+        )
         _send_message(chat_id, parsed["error"])
         return
 
@@ -349,7 +382,6 @@ def _handle_g_command(chat_id: int, text: str, user: dict) -> None:
             f"📅 Fecha: {gasto['fecha']}"
         ),
     )
-
 
 
 def _handle_message(payload: dict) -> None:
@@ -389,11 +421,12 @@ def _handle_message(payload: dict) -> None:
 
     command = text.strip().split()[0].lower()
     logger.info(
-        "Processing command=%s chat_id=%s chat_type=%s user_id=%s",
+        "Processing command=%s chat_id=%s chat_type=%s user_id=%s text_preview=%s",
         command,
         chat_id,
         chat.get("type"),
         user.get("id") if isinstance(user, dict) else None,
+        _sanitize_for_logs(text),
     )
 
     if command == "/menu":
@@ -420,7 +453,6 @@ def _handle_message(payload: dict) -> None:
         chat_id,
         "Comando no reconocido. Usa /menu o /g <monto> <descripcion>",
     )
-
 
 
 def lambda_handler(event, context):
