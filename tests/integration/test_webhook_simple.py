@@ -50,6 +50,80 @@ def test_webhook_g_command_simple(monkeypatch):
     assert any("💵 Monto: $30.000" in message["text"] for message in sent_messages)
 
 
+def test_webhook_accepts_string_ids(monkeypatch):
+    sent_messages = []
+
+    monkeypatch.setattr(main, "TELEGRAM_SECRET_TOKEN", "secret123")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "token123")
+    monkeypatch.setattr(main, "_parse_allowed_chat_ids", lambda: {-5126713881})
+    monkeypatch.setattr(
+        main,
+        "_send_message",
+        lambda chat_id, text, reply_markup=None: sent_messages.append(
+            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup}
+        ),
+    )
+
+    event = {
+        "headers": {
+            "X-Telegram-Bot-Api-Secret-Token": "secret123",
+        },
+        "body": json.dumps(
+            {
+                "message": {
+                    "text": "/menu",
+                    "chat": {"id": "-5126713881", "type": "supergroup"},
+                    "from": {"id": "2104198203", "first_name": "Santiago"},
+                }
+            }
+        ),
+    }
+
+    result = main.lambda_handler(event, None)
+
+    assert result["statusCode"] == 200
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["chat_id"] == -5126713881
+    assert sent_messages[0]["reply_markup"] is not None
+
+
+def test_webhook_accepts_payload_with_quoted_keys(monkeypatch):
+    sent_messages = []
+
+    monkeypatch.setattr(main, "TELEGRAM_SECRET_TOKEN", "secret123")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "token123")
+    monkeypatch.setattr(main, "_parse_allowed_chat_ids", lambda: {-5126713881})
+    monkeypatch.setattr(
+        main,
+        "_send_message",
+        lambda chat_id, text, reply_markup=None: sent_messages.append(
+            {"chat_id": chat_id, "text": text, "reply_markup": reply_markup}
+        ),
+    )
+
+    event = {
+        "headers": {
+            "X-Telegram-Bot-Api-Secret-Token": "secret123",
+        },
+        "body": json.dumps(
+            {
+                '"message"': {
+                    '"text"': "/menu",
+                    '"chat"': {'"id"': "-5126713881", '"type"': "supergroup"},
+                    '"from"': {'"id"': "2104198203", '"first_name"': "Santiago"},
+                }
+            }
+        ),
+    }
+
+    result = main.lambda_handler(event, None)
+
+    assert result["statusCode"] == 200
+    assert len(sent_messages) == 1
+    assert sent_messages[0]["chat_id"] == -5126713881
+    assert sent_messages[0]["reply_markup"] is not None
+
+
 def test_webhook_resumen_mes(monkeypatch):
     sent_messages = []
     captured_range = {}
