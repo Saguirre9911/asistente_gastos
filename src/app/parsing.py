@@ -21,6 +21,8 @@ _CATEGORY_KEYWORDS = {
     "salud": ["medico", "doctor", "farmacia", "salud", "medicina"],
 }
 
+_CURRENCY_PREFIXES = {"$", "usd", "us", "mxn"}
+
 
 def parse_amount(raw: str) -> float | None:
     if not raw:
@@ -109,6 +111,23 @@ def detect_category(description: str) -> str:
     return "otros"
 
 
+def _parse_g_payload(payload: str) -> tuple[float | None, str]:
+    tokens = payload.split()
+    if not tokens:
+        return None, ""
+
+    amount = parse_amount(tokens[0])
+    if amount is not None:
+        return amount, " ".join(tokens[1:]).strip()
+
+    if len(tokens) >= 2 and tokens[0].lower() in _CURRENCY_PREFIXES:
+        amount = parse_amount(tokens[1])
+        if amount is not None:
+            return amount, " ".join(tokens[2:]).strip()
+
+    return None, ""
+
+
 def parse_g_command(text: str) -> dict:
     """
     /g <monto> <descripcion>
@@ -121,15 +140,10 @@ def parse_g_command(text: str) -> dict:
     if not payload:
         return {"error": "Uso: /g <monto> <descripcion>"}
 
-    tokens = payload.split()
-    if not tokens:
-        return {"error": "Uso: /g <monto> <descripcion>"}
-
-    amount = parse_amount(tokens[0])
+    amount, description = _parse_g_payload(payload)
     if amount is None:
         return {"error": "Monto inválido. Ejemplo: /g 25000 almuerzo"}
 
-    description = " ".join(tokens[1:]).strip()
     if not description:
         return {"error": "Debes incluir una descripción. Ejemplo: /g 25000 almuerzo"}
 
